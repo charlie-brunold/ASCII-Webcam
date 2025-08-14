@@ -89,6 +89,24 @@
             color: #ccc;
         }
         
+        .layer-toggle {
+            background: #555;
+            font-size: 0.8rem;
+            padding: 0.4rem 0.7rem;
+        }
+        
+        .layer-toggle.active {
+            background: #e67e22;
+        }
+        
+        .layer-toggle:hover {
+            background: #666;
+        }
+        
+        .layer-toggle.active:hover {
+            background: #d35400;
+        }
+        
         .hidden-elements {
             display: none;
         }
@@ -116,6 +134,42 @@
             align-items: center;
             justify-content: center;
             overflow: hidden;
+            position: relative;
+        }
+        
+        .ascii-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: clamp(2px, 0.8vw, 12px);
+            line-height: 1;
+            text-align: center;
+        }
+        
+        .base-layer {
+            color: #0a8;
+            z-index: 1;
+        }
+        
+        .edge-layer {
+            color: #0f0;
+            z-index: 2;
+            background: transparent;
+            mix-blend-mode: screen;
+        }
+        
+        .detail-layer {
+            color: #ff0;
+            z-index: 3;
+            background: transparent;
+            mix-blend-mode: overlay;
         }
         
         .placeholder {
@@ -169,6 +223,11 @@
                     <option value="unicode_blocks">Unicode Blocks</option>
                 </select>
             </div>
+            <div class="control-group">
+                <span class="control-label">Layers:</span>
+                <button id="toggleEdges" class="layer-toggle active">Edges</button>
+                <button id="toggleDetails" class="layer-toggle">Details</button>
+            </div>
         </div>
         
         <!-- Hidden elements -->
@@ -189,7 +248,11 @@
         <!-- Main ASCII display taking up full screen -->
         <div class="ascii-display">
             <div id="outputBox" class="output-box">
-                <span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>
+                <div id="baseLayer" class="ascii-layer base-layer">
+                    <span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>
+                </div>
+                <div id="edgeLayer" class="ascii-layer edge-layer"></div>
+                <div id="detailLayer" class="ascii-layer detail-layer"></div>
             </div>
         </div>
     </div>
@@ -206,8 +269,60 @@
             'unicode_blocks': " ▏▎▍▌▋▊▉█"
         };
         
-        // ASCII conversion function - moved to client-side
-        function imageToAscii(imageData, width = 120, charSet = 'enhanced') {
+        // Edge detection for client-side processing
+        function detectEdges(imageData, threshold = 50) {
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            
+            const edges = new Array(width * height);
+            const directions = new Array(width * height);
+            
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = (y * width + x) * 4;
+                    
+                    // Get surrounding pixels
+                    const tl = data[((y-1) * width + (x-1)) * 4];
+                    const tm = data[((y-1) * width + x) * 4];
+                    const tr = data[((y-1) * width + (x+1)) * 4];
+                    const ml = data[(y * width + (x-1)) * 4];
+                    const mr = data[(y * width + (x+1)) * 4];
+                    const bl = data[((y+1) * width + (x-1)) * 4];
+                    const bm = data[((y+1) * width + x) * 4];
+                    const br = data[((y+1) * width + (x+1)) * 4];
+                    
+                    // Sobel operators
+                    const gx = -tl + tr - 2*ml + 2*mr - bl + br;
+                    const gy = -tl - 2*tm - tr + bl + 2*bm + br;
+                    
+                    const magnitude = Math.sqrt(gx*gx + gy*gy);
+                    const direction = Math.atan2(gy, gx);
+                    
+                    edges[y * width + x] = magnitude > threshold;
+                    directions[y * width + x] = direction;
+                }
+            }
+            
+            return { edges, directions };
+        }
+        
+        function getDirectionalChar(direction) {
+            const angle = ((direction * 180 / Math.PI) + 180) % 180;
+            
+            if (angle < 22.5 || angle >= 157.5) {
+                return '-';
+            } else if (angle >= 22.5 && angle < 67.5) {
+                return '/';
+            } else if (angle >= 67.5 && angle < 112.5) {
+                return '|';
+            } else {
+                return '\\';
+            }
+        }
+        
+        // Layered ASCII conversion function
+        function imageToLayeredAscii(imageData, width = 120, charSet = 'enhanced') {
             const asciiChars = ASCII_SETS[charSet] || ASCII_SETS['enhanced'];
             
             const canvas = document.createElement('canvas');
@@ -225,20 +340,57 @@
             const resizedImageData = ctx.getImageData(0, 0, width, height);
             const data = resizedImageData.data;
             
-            let asciiStr = '';
+            // Detect edges
+            const edgeData = detectEdges(resizedImageData, 30);
+            
+            let baseStr = '';
+            let edgeStr = '';
+            let detailStr = '';
             
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const index = (y * width + x) * 4;
+                    const edgeIndex = y * width + x;
+                    
                     // Convert to grayscale using luminance formula
                     const gray = Math.floor(0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2]);
+                    
+                    // Base layer - smooth gradients
                     const charIndex = Math.floor(gray * (asciiChars.length - 1) / 255);
-                    asciiStr += asciiChars[charIndex];
+                    baseStr += asciiChars[charIndex];
+                    
+                    // Edge layer - directional characters where edges detected
+                    if (edgeData.edges[edgeIndex]) {
+                        edgeStr += getDirectionalChar(edgeData.directions[edgeIndex]);
+                    } else {
+                        edgeStr += ' ';
+                    }
+                    
+                    // Detail layer - high frequency details (simplified for now)
+                    if (gray > 200 && edgeData.edges[edgeIndex]) {
+                        detailStr += '*';
+                    } else if (gray < 50 && edgeData.edges[edgeIndex]) {
+                        detailStr += '.';
+                    } else {
+                        detailStr += ' ';
+                    }
                 }
-                asciiStr += '\n';
+                baseStr += '\n';
+                edgeStr += '\n';
+                detailStr += '\n';
             }
             
-            return asciiStr;
+            return {
+                base: baseStr,
+                edges: edgeStr,
+                details: detailStr
+            };
+        }
+        
+        // Legacy single-layer function for compatibility
+        function imageToAscii(imageData, width = 120, charSet = 'enhanced') {
+            const layers = imageToLayeredAscii(imageData, width, charSet);
+            return layers.base; // Return base layer for backward compatibility
         }
         
         document.getElementById('startWebcam').addEventListener('click', function() {
@@ -261,6 +413,27 @@
         document.getElementById('charSetSelector').addEventListener('change', function() {
             // If webcam is streaming, the change will be picked up in the next frame
             // No additional action needed as processFrames() already reads the selector value
+        });
+        
+        // Handle layer toggle buttons
+        document.getElementById('toggleEdges').addEventListener('click', function() {
+            this.classList.toggle('active');
+            // If webcam is streaming, the change will be picked up in the next frame
+            // If not streaming, just toggle visibility
+            if (!isStreaming) {
+                const edgeLayer = document.getElementById('edgeLayer');
+                edgeLayer.style.display = this.classList.contains('active') ? 'flex' : 'none';
+            }
+        });
+        
+        document.getElementById('toggleDetails').addEventListener('click', function() {
+            this.classList.toggle('active');
+            // If webcam is streaming, the change will be picked up in the next frame
+            // If not streaming, just toggle visibility
+            if (!isStreaming) {
+                const detailLayer = document.getElementById('detailLayer');
+                detailLayer.style.display = this.classList.contains('active') ? 'flex' : 'none';
+            }
         });
         
         function startWebcam() {
@@ -293,7 +466,34 @@
             }
             document.getElementById('startWebcam').style.display = 'inline-block';
             document.getElementById('stopWebcam').style.display = 'none';
-            document.getElementById('outputBox').innerHTML = '<span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>';
+            
+            // Reset layers
+            document.getElementById('baseLayer').innerHTML = '<span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>';
+            document.getElementById('edgeLayer').textContent = '';
+            document.getElementById('detailLayer').textContent = '';
+        }
+        
+        function updateLayerDisplay(layers) {
+            // Update base layer
+            document.getElementById('baseLayer').textContent = layers.base;
+            
+            // Update edge layer if enabled
+            const edgeToggle = document.getElementById('toggleEdges');
+            if (edgeToggle.classList.contains('active')) {
+                document.getElementById('edgeLayer').textContent = layers.edges;
+                document.getElementById('edgeLayer').style.display = 'flex';
+            } else {
+                document.getElementById('edgeLayer').style.display = 'none';
+            }
+            
+            // Update detail layer if enabled
+            const detailToggle = document.getElementById('toggleDetails');
+            if (detailToggle.classList.contains('active')) {
+                document.getElementById('detailLayer').textContent = layers.details;
+                document.getElementById('detailLayer').style.display = 'flex';
+            } else {
+                document.getElementById('detailLayer').style.display = 'none';
+            }
         }
         
         function processFrames() {
@@ -305,9 +505,9 @@
             // Get selected character set
             const charSet = document.getElementById('charSetSelector').value;
             
-            // Convert directly to ASCII using client-side function
-            const asciiArt = imageToAscii(video, 120, charSet);
-            document.getElementById('outputBox').innerHTML = asciiArt;
+            // Convert to layered ASCII
+            const layers = imageToLayeredAscii(video, 120, charSet);
+            updateLayerDisplay(layers);
             
             // Much faster frame rate for smoother display
             setTimeout(processFrames, 33); // ~30 FPS
@@ -324,8 +524,10 @@
                 return;
             }
             
-            const outputBox = document.getElementById('outputBox');
-            outputBox.innerHTML = '<span class="placeholder">Converting with edge detection...</span>';
+            // Show loading message
+            document.getElementById('baseLayer').innerHTML = '<span class="placeholder">Converting with layered rendering...</span>';
+            document.getElementById('edgeLayer').textContent = '';
+            document.getElementById('detailLayer').textContent = '';
             
             // Hide the upload overlay
             document.getElementById('fileUploadOverlay').classList.remove('active');
@@ -333,7 +535,7 @@
             // Get selected character set
             const charSet = document.getElementById('charSetSelector').value;
             
-            // Use server-side conversion with edge detection
+            // Use server-side layered conversion
             const formData = new FormData();
             formData.append('image', file);
             formData.append('width', '120');
@@ -343,21 +545,21 @@
             formData.append('edge_threshold', '50');
             formData.append('force_unicode', 'true'); // Force unicode for web display
             
-            fetch('/convert', {
+            fetch('/convert_layered', {
                 method: 'POST',
                 body: formData
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    outputBox.innerHTML = data.ascii;
+                    updateLayerDisplay(data.layers);
                 } else {
-                    outputBox.innerHTML = `<span class="placeholder">Error: ${data.error}</span>`;
+                    document.getElementById('baseLayer').innerHTML = `<span class="placeholder">Error: ${data.error}</span>`;
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                outputBox.innerHTML = '<span class="placeholder">Error converting image</span>';
+                document.getElementById('baseLayer').innerHTML = '<span class="placeholder">Error converting image</span>';
             });
         });
     </script>
