@@ -272,18 +272,36 @@
             }
             
             const outputBox = document.getElementById('outputBox');
-            outputBox.innerHTML = '<span class="placeholder">Converting...</span>';
+            outputBox.innerHTML = '<span class="placeholder">Converting with edge detection...</span>';
             
             // Hide the upload overlay
             document.getElementById('fileUploadOverlay').classList.remove('active');
             
-            // Create image element and convert to ASCII client-side
-            const img = new Image();
-            img.onload = function() {
-                const asciiArt = imageToAscii(img, 120);
-                outputBox.innerHTML = asciiArt;
-            };
-            img.src = URL.createObjectURL(file);
+            // Use server-side conversion with edge detection
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('width', '120');
+            formData.append('char_set', 'enhanced');
+            formData.append('sampling_factor', '3');
+            formData.append('edge_detection', 'true');
+            formData.append('edge_threshold', '50');
+            
+            fetch('/convert', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    outputBox.innerHTML = data.ascii;
+                } else {
+                    outputBox.innerHTML = `<span class="placeholder">Error: ${data.error}</span>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                outputBox.innerHTML = '<span class="placeholder">Error converting image</span>';
+            });
         });
     </script>
 </body>

@@ -14,6 +14,16 @@ ASCII_SETS = {
     'simple': " .oO@"
 }
 
+# Directional characters for edge detection
+EDGE_CHARS = {
+    'horizontal': '-',
+    'vertical': '|',
+    'diagonal_right': '/',
+    'diagonal_left': '\\',
+    'cross': '+',
+    'corner': '*'
+}
+
 def get_char_brightness_map(char_set):
     char_map = {}
     num_chars = len(char_set)
@@ -22,7 +32,61 @@ def get_char_brightness_map(char_set):
         char_map[brightness] = char
     return char_map
 
-def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3):
+def detect_edges(img_array, threshold=50):
+    """
+    Detect edges using Sobel operators and return edge map with directions.
+    """
+    # Sobel kernels for edge detection
+    sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
+    sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+    
+    # Pad the image to handle borders
+    padded = np.pad(img_array, 1, mode='edge')
+    
+    # Initialize output arrays
+    height, width = img_array.shape
+    edge_magnitude = np.zeros((height, width))
+    edge_direction = np.zeros((height, width))
+    
+    # Apply Sobel filters
+    for y in range(height):
+        for x in range(width):
+            # Extract 3x3 region
+            region = padded[y:y+3, x:x+3]
+            
+            # Calculate gradients
+            grad_x = np.sum(region * sobel_x)
+            grad_y = np.sum(region * sobel_y)
+            
+            # Calculate magnitude and direction
+            magnitude = np.sqrt(grad_x**2 + grad_y**2)
+            direction = np.arctan2(grad_y, grad_x)
+            
+            edge_magnitude[y, x] = magnitude
+            edge_direction[y, x] = direction
+    
+    # Create edge mask based on threshold
+    edge_mask = edge_magnitude > threshold
+    
+    return edge_mask, edge_direction, edge_magnitude
+
+def get_directional_char(direction):
+    """
+    Convert edge direction to appropriate directional character.
+    """
+    # Convert direction from radians to degrees and normalize to 0-180
+    angle = np.degrees(direction) % 180
+    
+    if angle < 22.5 or angle >= 157.5:
+        return EDGE_CHARS['horizontal']
+    elif 22.5 <= angle < 67.5:
+        return EDGE_CHARS['diagonal_right']
+    elif 67.5 <= angle < 112.5:
+        return EDGE_CHARS['vertical']
+    else:  # 112.5 <= angle < 157.5
+        return EDGE_CHARS['diagonal_left']
+
+def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50):
     if char_set not in ASCII_SETS:
         char_set = 'enhanced'
     
@@ -42,6 +106,12 @@ def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3):
     # Convert to numpy array for efficient processing
     img_array = np.array(high_res_image)
     
+    # Detect edges if enabled
+    edge_mask = None
+    edge_direction = None
+    if edge_detection:
+        edge_mask, edge_direction, edge_magnitude = detect_edges(img_array, edge_threshold)
+    
     ascii_str = ''
     for y in range(height):
         for x in range(width):
@@ -54,7 +124,25 @@ def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3):
             # Extract the block and apply weighted averaging
             block = img_array[start_y:end_y, start_x:end_x]
             
-            # Use gaussian-weighted averaging for smoother results
+            # Check if this region contains significant edges
+            if edge_detection and edge_mask is not None:
+                edge_block = edge_mask[start_y:end_y, start_x:end_x]
+                edge_dir_block = edge_direction[start_y:end_y, start_x:end_x]
+                
+                # If more than 30% of the block contains edges, use directional character
+                edge_ratio = np.mean(edge_block)
+                if edge_ratio > 0.3:
+                    # Get the dominant edge direction in this block
+                    if np.any(edge_block):
+                        # Calculate weighted average of edge directions
+                        edge_directions = edge_dir_block[edge_block]
+                        if len(edge_directions) > 0:
+                            # Use the median direction for stability
+                            dominant_direction = np.median(edge_directions)
+                            ascii_str += get_directional_char(dominant_direction)
+                            continue
+            
+            # Use gaussian-weighted averaging for smoother results (fill regions)
             block_height, block_width = block.shape
             weights = np.zeros((block_height, block_width))
             
@@ -101,9 +189,12 @@ def convert_image():
         width = int(request.form.get('width', 80))
         sampling_factor = int(request.form.get('sampling_factor', 3))
         char_set = request.form.get('char_set', 'enhanced')
+        edge_detection = request.form.get('edge_detection', 'true').lower() == 'true'
+        edge_threshold = int(request.form.get('edge_threshold', 50))
         
         image = Image.open(io.BytesIO(file.read()))
-        ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor)
+        ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor, 
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold)
         
         return jsonify({
             'success': True, 
@@ -123,9 +214,12 @@ def process_webcam_frame():
         width = data.get('width', 60)
         sampling_factor = data.get('sampling_factor', 3)
         char_set = data.get('char_set', 'enhanced')
+        edge_detection = data.get('edge_detection', True)
+        edge_threshold = data.get('edge_threshold', 50)
         
         image = Image.open(io.BytesIO(image_bytes))
-        ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor)
+        ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor,
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold)
         
         return jsonify({
             'success': True,
