@@ -39,6 +39,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
         
         .controls-overlay h1 {
@@ -60,6 +61,32 @@
         
         button:hover {
             background: #2980b9;
+        }
+        
+        select {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+        
+        select:hover {
+            background: #2980b9;
+        }
+        
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .control-label {
+            font-size: 0.8rem;
+            color: #ccc;
         }
         
         .hidden-elements {
@@ -133,6 +160,15 @@
             <button id="startWebcam">Start Webcam</button>
             <button id="stopWebcam" style="display: none;">Stop Webcam</button>
             <button id="uploadImage">Upload Image</button>
+            <div class="control-group">
+                <span class="control-label">Style:</span>
+                <select id="charSetSelector">
+                    <option value="enhanced">Enhanced ASCII</option>
+                    <option value="standard">Standard ASCII</option>
+                    <option value="simple">Simple ASCII</option>
+                    <option value="unicode_blocks">Unicode Blocks</option>
+                </select>
+            </div>
         </div>
         
         <!-- Hidden elements -->
@@ -162,9 +198,17 @@
         let video, canvas, context, stream;
         let isStreaming = false;
         
+        // ASCII character sets
+        const ASCII_SETS = {
+            'enhanced': " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
+            'standard': " .:-=+*#%@",
+            'simple': " .oO@",
+            'unicode_blocks': " ▏▎▍▌▋▊▉█"
+        };
+        
         // ASCII conversion function - moved to client-side
-        function imageToAscii(imageData, width = 120) {
-            const asciiChars = "$@B%8WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~i!lI;:,^`. ";
+        function imageToAscii(imageData, width = 120, charSet = 'enhanced') {
+            const asciiChars = ASCII_SETS[charSet] || ASCII_SETS['enhanced'];
             
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
@@ -213,6 +257,12 @@
             document.getElementById('fileUploadOverlay').classList.remove('active');
         });
         
+        // Handle character set changes during webcam streaming
+        document.getElementById('charSetSelector').addEventListener('change', function() {
+            // If webcam is streaming, the change will be picked up in the next frame
+            // No additional action needed as processFrames() already reads the selector value
+        });
+        
         function startWebcam() {
             video = document.getElementById('video');
             canvas = document.getElementById('canvas');
@@ -252,8 +302,11 @@
             // Draw current video frame to canvas
             context.drawImage(video, 0, 0, 320, 240);
             
+            // Get selected character set
+            const charSet = document.getElementById('charSetSelector').value;
+            
             // Convert directly to ASCII using client-side function
-            const asciiArt = imageToAscii(video, 120);
+            const asciiArt = imageToAscii(video, 120, charSet);
             document.getElementById('outputBox').innerHTML = asciiArt;
             
             // Much faster frame rate for smoother display
@@ -277,14 +330,18 @@
             // Hide the upload overlay
             document.getElementById('fileUploadOverlay').classList.remove('active');
             
+            // Get selected character set
+            const charSet = document.getElementById('charSetSelector').value;
+            
             // Use server-side conversion with edge detection
             const formData = new FormData();
             formData.append('image', file);
             formData.append('width', '120');
-            formData.append('char_set', 'enhanced');
+            formData.append('char_set', charSet);
             formData.append('sampling_factor', '3');
             formData.append('edge_detection', 'true');
             formData.append('edge_threshold', '50');
+            formData.append('force_unicode', 'true'); // Force unicode for web display
             
             fetch('/convert', {
                 method: 'POST',

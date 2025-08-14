@@ -5,13 +5,16 @@ import os
 import io
 import base64
 import numpy as np
+import sys
+import locale
 
 app = Flask(__name__)
 
 ASCII_SETS = {
     'enhanced': " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
     'standard': " .:-=+*#%@",
-    'simple': " .oO@"
+    'simple': " .oO@",
+    'unicode_blocks': " ▏▎▍▌▋▊▉█"
 }
 
 # Directional characters for edge detection
@@ -23,6 +26,32 @@ EDGE_CHARS = {
     'cross': '+',
     'corner': '*'
 }
+
+def detect_unicode_support():
+    """
+    Detect if the terminal/environment supports Unicode characters.
+    Returns True if Unicode is likely supported, False otherwise.
+    """
+    try:
+        # Check encoding
+        encoding = sys.stdout.encoding or locale.getpreferredencoding()
+        if encoding.lower() in ['utf-8', 'utf8']:
+            # Try to encode a Unicode block character
+            test_char = '█'
+            test_char.encode(encoding)
+            return True
+    except (AttributeError, UnicodeEncodeError, LookupError):
+        pass
+    
+    return False
+
+def get_fallback_charset(char_set):
+    """
+    Get ASCII fallback for Unicode character sets.
+    """
+    if char_set == 'unicode_blocks':
+        return 'enhanced'
+    return char_set
 
 def get_char_brightness_map(char_set):
     char_map = {}
@@ -86,9 +115,13 @@ def get_directional_char(direction):
     else:  # 112.5 <= angle < 157.5
         return EDGE_CHARS['diagonal_left']
 
-def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50):
+def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50, force_unicode=False):
     if char_set not in ASCII_SETS:
         char_set = 'enhanced'
+    
+    # Check Unicode support and fallback if necessary
+    if char_set == 'unicode_blocks' and not force_unicode and not detect_unicode_support():
+        char_set = get_fallback_charset(char_set)
     
     ascii_chars = ASCII_SETS[char_set]
     
@@ -110,7 +143,7 @@ def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge
     edge_mask = None
     edge_direction = None
     if edge_detection:
-        edge_mask, edge_direction, edge_magnitude = detect_edges(img_array, edge_threshold)
+        edge_mask, edge_direction, _ = detect_edges(img_array, edge_threshold)
     
     ascii_str = ''
     for y in range(height):
@@ -191,10 +224,11 @@ def convert_image():
         char_set = request.form.get('char_set', 'enhanced')
         edge_detection = request.form.get('edge_detection', 'true').lower() == 'true'
         edge_threshold = int(request.form.get('edge_threshold', 50))
+        force_unicode = request.form.get('force_unicode', 'false').lower() == 'true'
         
         image = Image.open(io.BytesIO(file.read()))
         ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor, 
-                                 edge_detection=edge_detection, edge_threshold=edge_threshold)
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode)
         
         return jsonify({
             'success': True, 
@@ -216,10 +250,11 @@ def process_webcam_frame():
         char_set = data.get('char_set', 'enhanced')
         edge_detection = data.get('edge_detection', True)
         edge_threshold = data.get('edge_threshold', 50)
+        force_unicode = data.get('force_unicode', False)
         
         image = Image.open(io.BytesIO(image_bytes))
         ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor,
-                                 edge_detection=edge_detection, edge_threshold=edge_threshold)
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode)
         
         return jsonify({
             'success': True,
