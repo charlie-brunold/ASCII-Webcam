@@ -93,13 +93,20 @@
 </head>
 <body>
     <div class="container">
-        <h1>ASCII Art Converter</h1>
+        <h1>ASCII Webcam</h1>
         
         <div class="upload-section">
-            <form id="uploadForm" enctype="multipart/form-data">
+            <div class="webcam-section">
+                <video id="video" width="320" height="240" autoplay style="display: none;"></video>
+                <canvas id="canvas" width="320" height="240" style="display: none;"></canvas>
+                <button id="startWebcam">Start Webcam</button>
+                <button id="stopWebcam" style="display: none;">Stop Webcam</button>
+            </div>
+            
+            <form id="uploadForm" enctype="multipart/form-data" style="margin-top: 1rem;">
                 <div class="file-input-wrapper">
                     <input type="file" id="imageFile" name="image" accept="image/*" required>
-                    <button type="submit">Convert to ASCII</button>
+                    <button type="submit">Convert Image to ASCII</button>
                 </div>
             </form>
         </div>
@@ -107,12 +114,105 @@
         <div class="output-section">
             <h2>ASCII Output</h2>
             <div id="outputBox" class="output-box">
-                <span class="placeholder">Upload an image to see ASCII art here...</span>
+                <span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>
             </div>
         </div>
     </div>
 
     <script>
+        let video, canvas, context, stream;
+        let isStreaming = false;
+        
+        // ASCII conversion function - moved to client-side
+        function imageToAscii(imageData, width = 60) {
+            const asciiChars = "$@B%8WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~i!lI;:,^`. ";
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Calculate dimensions maintaining aspect ratio
+            const aspectRatio = imageData.height / imageData.width;
+            const height = Math.floor(aspectRatio * width * 0.55);
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            // Resize image
+            ctx.drawImage(imageData, 0, 0, width, height);
+            const resizedImageData = ctx.getImageData(0, 0, width, height);
+            const data = resizedImageData.data;
+            
+            let asciiStr = '';
+            
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const index = (y * width + x) * 4;
+                    // Convert to grayscale using luminance formula
+                    const gray = Math.floor(0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2]);
+                    const charIndex = Math.floor(gray * (asciiChars.length - 1) / 255);
+                    asciiStr += asciiChars[charIndex];
+                }
+                asciiStr += '\n';
+            }
+            
+            return asciiStr;
+        }
+        
+        document.getElementById('startWebcam').addEventListener('click', function() {
+            startWebcam();
+        });
+        
+        document.getElementById('stopWebcam').addEventListener('click', function() {
+            stopWebcam();
+        });
+        
+        function startWebcam() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('canvas');
+            context = canvas.getContext('2d');
+            
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(function(mediaStream) {
+                    stream = mediaStream;
+                    video.srcObject = stream;
+                    video.play();
+                    isStreaming = true;
+                    
+                    document.getElementById('startWebcam').style.display = 'none';
+                    document.getElementById('stopWebcam').style.display = 'inline-block';
+                    
+                    processFrames();
+                })
+                .catch(function(err) {
+                    console.error('Error accessing webcam: ', err);
+                    alert('Error accessing webcam. Please make sure you have a webcam connected and permissions are granted.');
+                });
+        }
+        
+        function stopWebcam() {
+            isStreaming = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('startWebcam').style.display = 'inline-block';
+            document.getElementById('stopWebcam').style.display = 'none';
+            document.getElementById('outputBox').innerHTML = '<span class="placeholder">Start webcam or upload an image to see ASCII art here...</span>';
+        }
+        
+        function processFrames() {
+            if (!isStreaming) return;
+            
+            // Draw current video frame to canvas
+            context.drawImage(video, 0, 0, 320, 240);
+            
+            // Convert directly to ASCII using client-side function
+            const asciiArt = imageToAscii(video, 60);
+            document.getElementById('outputBox').innerHTML = asciiArt;
+            
+            // Much faster frame rate for smoother display
+            setTimeout(processFrames, 33); // ~30 FPS
+        }
+        
         document.getElementById('uploadForm').addEventListener('submit', function(e) {
             e.preventDefault();
             

@@ -1,7 +1,10 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from PIL import Image
+import cv2
 import os
 import io
+import base64
+import numpy as np
 
 app = Flask(__name__)
 
@@ -46,6 +49,23 @@ def convert_image():
         })
     except Exception as e:
         return jsonify({'success': False, 'error': f'Failed to process image: {str(e)}'})
+
+@app.route('/webcam_frame', methods=['POST'])
+def process_webcam_frame():
+    try:
+        data = request.get_json()
+        image_data = data['image'].split(',')[1]
+        image_bytes = base64.b64decode(image_data)
+        
+        image = Image.open(io.BytesIO(image_bytes))
+        ascii_art = image_to_ascii(image, width=60)
+        
+        return jsonify({
+            'success': True,
+            'ascii': ascii_art
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
