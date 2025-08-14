@@ -61,23 +61,59 @@ def get_char_brightness_map(char_set):
         char_map[brightness] = char
     return char_map
 
-def detect_edges(img_array, threshold=50):
+def gaussian_blur(img_array, sigma):
     """
-    Detect edges using Sobel operators and return edge map with directions.
+    Apply Gaussian blur using a simple approximation with repeated box blurs.
     """
-    # Sobel kernels for edge detection
+    # Convert sigma to kernel size (odd number)
+    kernel_size = max(3, int(6 * sigma) | 1)
+    half_size = kernel_size // 2
+    
+    # Create Gaussian kernel
+    kernel = np.zeros((kernel_size, kernel_size))
+    for i in range(kernel_size):
+        for j in range(kernel_size):
+            x, y = i - half_size, j - half_size
+            kernel[i, j] = np.exp(-(x*x + y*y) / (2 * sigma * sigma))
+    
+    # Normalize kernel
+    kernel = kernel / np.sum(kernel)
+    
+    # Apply convolution
+    height, width = img_array.shape
+    padded = np.pad(img_array, half_size, mode='edge')
+    result = np.zeros((height, width))
+    
+    for y in range(height):
+        for x in range(width):
+            region = padded[y:y+kernel_size, x:x+kernel_size]
+            result[y, x] = np.sum(region * kernel)
+    
+    return result
+
+def detect_edges(img_array, threshold=50, sigma1=1.0, sigma2=1.6):
+    """
+    Detect edges using Difference of Gaussians + Sobel operators.
+    This approach filters out gradual brightness changes and detects true structural edges.
+    """
+    # Step 1: Apply Difference of Gaussians (DoG) preprocessing
+    blur1 = gaussian_blur(img_array, sigma1)
+    blur2 = gaussian_blur(img_array, sigma2)
+    dog_image = blur1 - blur2
+    
+    # Step 2: Apply Sobel operators to the DoG result
     sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
     
-    # Pad the image to handle borders
-    padded = np.pad(img_array, 1, mode='edge')
+    # Pad the DoG image to handle borders
+    padded = np.pad(dog_image, 1, mode='edge')
     
     # Initialize output arrays
     height, width = img_array.shape
     edge_magnitude = np.zeros((height, width))
     edge_direction = np.zeros((height, width))
     
-    # Apply Sobel filters
+    # Apply Sobel filters to DoG image
     for y in range(height):
         for x in range(width):
             # Extract 3x3 region
@@ -95,6 +131,7 @@ def detect_edges(img_array, threshold=50):
             edge_direction[y, x] = direction
     
     # Create edge mask based on threshold
+    # Note: DoG+Sobel may need a different threshold scale than raw Sobel
     edge_mask = edge_magnitude > threshold
     
     return edge_mask, edge_direction, edge_magnitude
@@ -115,7 +152,7 @@ def get_directional_char(direction):
     else:  # 112.5 <= angle < 157.5
         return EDGE_CHARS['diagonal_left']
 
-def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50, force_unicode=False):
+def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50, force_unicode=False, dog_sigma1=1.0, dog_sigma2=1.6):
     if char_set not in ASCII_SETS:
         char_set = 'enhanced'
     
@@ -143,7 +180,7 @@ def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge
     edge_mask = None
     edge_direction = None
     if edge_detection:
-        edge_mask, edge_direction, _ = detect_edges(img_array, edge_threshold)
+        edge_mask, edge_direction, _ = detect_edges(img_array, edge_threshold, dog_sigma1, dog_sigma2)
     
     ascii_str = ''
     for y in range(height):
@@ -204,7 +241,7 @@ def image_to_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge
     
     return ascii_str
 
-def image_to_layered_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50, force_unicode=False):
+def image_to_layered_ascii(image, width=80, char_set='enhanced', sampling_factor=3, edge_detection=True, edge_threshold=50, force_unicode=False, dog_sigma1=1.0, dog_sigma2=1.6):
     """
     Generate layered ASCII art with separate base, edge, and detail layers.
     """
@@ -235,7 +272,7 @@ def image_to_layered_ascii(image, width=80, char_set='enhanced', sampling_factor
     edge_mask = None
     edge_direction = None
     if edge_detection:
-        edge_mask, edge_direction, _ = detect_edges(img_array, edge_threshold)
+        edge_mask, edge_direction, _ = detect_edges(img_array, edge_threshold, dog_sigma1, dog_sigma2)
     
     base_str = ''
     edge_str = ''
@@ -349,11 +386,14 @@ def convert_image():
         char_set = request.form.get('char_set', 'enhanced')
         edge_detection = request.form.get('edge_detection', 'true').lower() == 'true'
         edge_threshold = int(request.form.get('edge_threshold', 50))
+        dog_sigma1 = float(request.form.get('dog_sigma1', 1.0))
+        dog_sigma2 = float(request.form.get('dog_sigma2', 1.6))
         force_unicode = request.form.get('force_unicode', 'false').lower() == 'true'
         
         image = Image.open(io.BytesIO(file.read()))
         ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor, 
-                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode)
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode,
+                                 dog_sigma1=dog_sigma1, dog_sigma2=dog_sigma2)
         
         return jsonify({
             'success': True, 
@@ -378,11 +418,14 @@ def convert_image_layered():
         char_set = request.form.get('char_set', 'enhanced')
         edge_detection = request.form.get('edge_detection', 'true').lower() == 'true'
         edge_threshold = int(request.form.get('edge_threshold', 50))
+        dog_sigma1 = float(request.form.get('dog_sigma1', 1.0))
+        dog_sigma2 = float(request.form.get('dog_sigma2', 1.6))
         force_unicode = request.form.get('force_unicode', 'false').lower() == 'true'
         
         image = Image.open(io.BytesIO(file.read()))
         layered_ascii = image_to_layered_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor, 
-                                            edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode)
+                                            edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode,
+                                            dog_sigma1=dog_sigma1, dog_sigma2=dog_sigma2)
         
         return jsonify({
             'success': True, 
@@ -404,11 +447,14 @@ def process_webcam_frame():
         char_set = data.get('char_set', 'enhanced')
         edge_detection = data.get('edge_detection', True)
         edge_threshold = data.get('edge_threshold', 50)
+        dog_sigma1 = data.get('dog_sigma1', 1.0)
+        dog_sigma2 = data.get('dog_sigma2', 1.6)
         force_unicode = data.get('force_unicode', False)
         
         image = Image.open(io.BytesIO(image_bytes))
         ascii_art = image_to_ascii(image, width=width, char_set=char_set, sampling_factor=sampling_factor,
-                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode)
+                                 edge_detection=edge_detection, edge_threshold=edge_threshold, force_unicode=force_unicode,
+                                 dog_sigma1=dog_sigma1, dog_sigma2=dog_sigma2)
         
         return jsonify({
             'success': True,
