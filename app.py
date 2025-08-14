@@ -6,7 +6,7 @@ import io
 app = Flask(__name__)
 
 def image_to_ascii(image, width=80):
-    ascii_chars = '@%#*+=-:. '
+    ascii_chars = "$@B%8WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~i!lI;:,^`. "
     
     aspect_ratio = image.height / image.width
     height = int(aspect_ratio * width * 0.55)
@@ -18,7 +18,7 @@ def image_to_ascii(image, width=80):
     for y in range(height):
         for x in range(width):
             pixel = image.getpixel((x, y))
-            ascii_str += ascii_chars[pixel // 32]
+            ascii_str += ascii_chars[pixel * (len(ascii_chars) - 1) // 255]
         ascii_str += '\n'
     
     return ascii_str
