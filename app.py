@@ -8,8 +8,25 @@ import numpy as np
 
 app = Flask(__name__)
 
-def image_to_ascii(image, width=80):
-    ascii_chars = "$@B%8WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~i!lI;:,^`. "
+ASCII_SETS = {
+    'enhanced': " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
+    'standard': " .:-=+*#%@",
+    'simple': " .oO@"
+}
+
+def get_char_brightness_map(char_set):
+    char_map = {}
+    num_chars = len(char_set)
+    for i, char in enumerate(char_set):
+        brightness = int((i / (num_chars - 1)) * 255)
+        char_map[brightness] = char
+    return char_map
+
+def image_to_ascii(image, width=80, char_set='enhanced'):
+    if char_set not in ASCII_SETS:
+        char_set = 'enhanced'
+    
+    ascii_chars = ASCII_SETS[char_set]
     
     aspect_ratio = image.height / image.width
     height = int(aspect_ratio * width * 0.55)
@@ -21,7 +38,8 @@ def image_to_ascii(image, width=80):
     for y in range(height):
         for x in range(width):
             pixel = image.getpixel((x, y))
-            ascii_str += ascii_chars[pixel * (len(ascii_chars) - 1) // 255]
+            char_index = pixel * (len(ascii_chars) - 1) // 255
+            ascii_str += ascii_chars[char_index]
         ascii_str += '\n'
     
     return ascii_str
